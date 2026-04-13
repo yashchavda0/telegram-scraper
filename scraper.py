@@ -67,7 +67,11 @@ WATCH_GROUPS = [
     "uber_solutions",
     "foundthejob",
     "TechUprise_Updates",
-    "gocareers"
+    "gocareers",
+    "fresher_jobs2",
+    "campusdriveupdates",
+    "fresher_tech_job"
+    "jobsandinternshipdaily"
     # add as many as you want
 ]
 

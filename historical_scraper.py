@@ -70,7 +70,11 @@ WATCH_GROUPS = [
     "uber_solutions",
     "foundthejob",
     "TechUprise_Updates",
-    "gocareers"
+    "gocareers",
+    "fresher_jobs2",
+    "campusdriveupdates",
+    "fresher_tech_job"
+    "jobsandinternshipdaily"
     # add as many as you want
 ]
 
@@ -282,7 +286,12 @@ def save_results(jobs: list, from_date: str):
 # ─── Core Scraper ─────────────────────────────────────────────────────────────
 async def scrape_history(since: datetime):
     client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
-    await client.start()
+
+    await client.connect()
+
+    if not await client.is_user_authorized():
+        raise Exception("❌ Session not authorized. Run script manually once to login.")
+
     me = await client.get_me()
     log.info("✅ Logged in as: %s", me.username or me.phone)
 
@@ -391,7 +400,7 @@ def main():
         log.info("📅 Scraping last %d day(s)", args.days)
     else:
         # Default: today from midnight UTC
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         since = now.replace(hour=0, minute=0, second=0, microsecond=0)
         log.info("📅 Scraping today's messages (since midnight UTC)")
 
