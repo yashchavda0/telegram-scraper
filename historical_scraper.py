@@ -57,6 +57,7 @@ SMTP_PORT      = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER      = os.environ["SMTP_USER"]
 SMTP_PASSWORD  = os.environ["SMTP_PASSWORD"]
 YOUR_EMAIL     = os.environ["YOUR_EMAIL"]
+RECIPIENT_EMAILS = [e.strip() for e in YOUR_EMAIL.split(",") if e.strip()]
 
 # ─── Groups to Scrape ─────────────────────────────────────────────────────────
 WATCH_GROUPS = [
@@ -73,7 +74,7 @@ WATCH_GROUPS = [
     "gocareers",
     "fresher_jobs2",
     "campusdriveupdates",
-    "fresher_tech_job"
+    "fresher_tech_job",
     "jobsandinternshipdaily"
     # add as many as you want
 ]
@@ -203,7 +204,7 @@ def send_email_report(jobs: list, from_date: str, stats: dict):
         msg = MIMEMultipart("alternative")
         msg["Subject"] = f"📊 Job Scan Report — {len(jobs)} matches since {from_date}"
         msg["From"]    = SMTP_USER
-        msg["To"]      = YOUR_EMAIL
+        msg["To"]      = ", ".join(RECIPIENT_EMAILS)
 
         # Build job cards
         cards = ""
@@ -269,8 +270,8 @@ def send_email_report(jobs: list, from_date: str, stats: dict):
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
             s.starttls()
             s.login(SMTP_USER, SMTP_PASSWORD)
-            s.sendmail(SMTP_USER, YOUR_EMAIL, msg.as_string())
-        log.info("✅ Email report sent")
+            s.sendmail(SMTP_USER, RECIPIENT_EMAILS, msg.as_string())
+        log.info("✅ Email report sent to %d recipient(s)", len(RECIPIENT_EMAILS))
     except Exception as e:
         log.error("Email error: %s", e)
 

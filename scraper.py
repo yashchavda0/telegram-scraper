@@ -48,7 +48,7 @@ SMTP_HOST         = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT         = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER         = os.environ["SMTP_USER"]
 SMTP_PASSWORD     = os.environ["SMTP_PASSWORD"]
-YOUR_EMAIL        = os.environ["YOUR_EMAIL"]
+RECIPIENT_EMAILS  = [e.strip() for e in os.environ["YOUR_EMAIL"].split(",") if e.strip()]
 
 # ─── Groups / Channels to Monitor ────────────────────────────────────────────
 # Add usernames (without @) or invite links or numeric IDs
@@ -198,7 +198,7 @@ def send_email(job: dict):
         msg = MIMEMultipart("alternative")
         msg["Subject"] = f"🎯 Job Match: {job['title']} at {job['company']}"
         msg["From"]    = SMTP_USER
-        msg["To"]      = YOUR_EMAIL
+        msg["To"]      = ", ".join(RECIPIENT_EMAILS)
 
         snippet = job["original"][:2000] + ("..." if len(job["original"]) > 2000 else "")
 
@@ -234,8 +234,8 @@ def send_email(job: dict):
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
             s.starttls()
             s.login(SMTP_USER, SMTP_PASSWORD)
-            s.sendmail(SMTP_USER, YOUR_EMAIL, msg.as_string())
-        log.info("✅ Email sent")
+            s.sendmail(SMTP_USER, RECIPIENT_EMAILS, msg.as_string())
+        log.info("✅ Email sent to %d recipient(s)", len(RECIPIENT_EMAILS))
     except Exception as e:
         log.error("Email error: %s", e)
 
