@@ -61,21 +61,30 @@ RECIPIENT_EMAILS = [e.strip() for e in YOUR_EMAIL.split(",") if e.strip()]
 
 # ─── Groups to Scrape ─────────────────────────────────────────────────────────
 WATCH_GROUPS = [
-    "tcs_nqt_2026",        # replace with real group usernames
-    "bnydiscussion2020",
-    "tcshyderabadregion",
+    "tcs_nqt_2026", 
+    "freshers_it_jobs",       # replace with real group usernames
     "talentdin",
-    "onlinelearning2025",
-    "Fresherjobsadda",
+    "bnydiscussion2020",
     "seekerasjobs",
-    "uber_solutions",
     "foundthejob",
+    "onlinelearning2025",
+    "way2freshers",
+    "OffCampus_Campus_Jobs_Internship",
     "TechUprise_Updates",
+    "Fresherjobsadda",
+    "jobs_and_internships_updates",
+    "tcshyderabadregion",
+    "Internshipupdatesfreveryone",
+    "uber_solutions",
+    "goyalarsh",
     "gocareers",
-    "fresher_jobs2",
-    "campusdriveupdates",
+    "jobsandinternshipsupdates",
+    "PLACEMENTLELO",
+    "off_campus_jobs_and_internships",
+    "jobsandinternshipdaily",
     "fresher_tech_job",
-    "jobsandinternshipdaily"
+    "campusdriveupdates",
+    "fresher_jobs2",
     # add as many as you want
 ]
 
@@ -84,7 +93,7 @@ GPT_DELAY_SECONDS = 1.5
 
 # ─── Your Profile ─────────────────────────────────────────────────────────────
 MY_PROFILE = """
-I am a Data / AI / ML professional seeking new opportunities.
+I am a Data / AI / ML / Software Engineer / Junior Software Developer / SDE / AI Architect professional seeking new opportunities.
 Core skills:
 - Machine Learning & Deep Learning (PyTorch, TensorFlow, scikit-learn)
 - Data Science & Analytics (Python, Pandas, NumPy, SQL)
