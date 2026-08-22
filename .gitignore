@@ -10,3 +10,9 @@ wheels/
 .venv
 .env
 job_scraper.session
+
+# Runtime artifacts
+batch_log.jsonl
+jobs_*.json
+*.bak
+previews/

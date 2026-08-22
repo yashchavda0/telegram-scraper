@@ -1,23 +1,25 @@
 """
-Job Scraper — Telethon Edition
+Job Scraper — Real-time Telethon Edition (Batch Mode)
+─────────────────────────────────────────────────────
 Logs in as YOUR Telegram account, monitors specific groups/channels,
-uses Azure OpenAI GPT-4o to match Data/AI/ML jobs, then notifies via WhatsApp + Email.
+uses Azure OpenAI GPT-4.1 in BATCHES to match Data/AI/ML jobs,
+then notifies via Email (instant or digest mode).
+
+Batch buffer flushes when:
+  - Buffer reaches LLM_BATCH_SIZE messages, OR
+  - 60 seconds since first buffered message (whichever comes first)
 """
 
 import os
-import re
 import logging
 import asyncio
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
-from openai import AzureOpenAI
 from telethon import TelegramClient, events
-from telethon.tl.types import Channel, Chat
-from twilio.rest import Client as TwilioClient
 from dotenv import load_dotenv
+
+from llm import BatchAnalyzer, LLM_BATCH_SIZE
+from email_templates import send_instant_match_email, send_digest_email
 
 load_dotenv()
 
@@ -29,35 +31,20 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ─── Config ──────────────────────────────────────────────────────────────────
-API_ID            = int(os.environ["TELEGRAM_API_ID"])
-API_HASH          = os.environ["TELEGRAM_API_HASH"]
-SESSION_NAME      = "job_scraper"            # saves login session locally
+API_ID       = int(os.environ["TELEGRAM_API_ID"])
+API_HASH     = os.environ["TELEGRAM_API_HASH"]
+SESSION_NAME = "job_scraper"
 
-# Azure OpenAI
-AZURE_OPENAI_KEY      = os.environ["AZURE_OPENAI_KEY"]
-AZURE_OPENAI_ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"]   # e.g. https://your-resource.openai.azure.com/
-AZURE_DEPLOYMENT_NAME = os.environ["AZURE_DEPLOYMENT_NAME"]   # e.g. gpt-4o
-AZURE_API_VERSION     = os.environ.get("AZURE_API_VERSION", "2024-02-01")
+# Email mode: "instant" (per-match) or "digest" (batched every N minutes)
+EMAIL_MODE = os.environ.get("EMAIL_MODE", "instant").lower()
+EMAIL_DIGEST_INTERVAL_MINUTES = int(os.environ.get("EMAIL_DIGEST_INTERVAL_MINUTES", "30"))
 
-# TWILIO_SID        = os.environ["TWILIO_ACCOUNT_SID"]
-# TWILIO_AUTH       = os.environ["TWILIO_AUTH_TOKEN"]
-# TWILIO_WA_FROM    = os.environ["TWILIO_WHATSAPP_FROM"]
-# YOUR_WA_NUMBER    = os.environ["YOUR_WHATSAPP_NUMBER"]
-
-SMTP_HOST         = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT         = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USER         = os.environ["SMTP_USER"]
-SMTP_PASSWORD     = os.environ["SMTP_PASSWORD"]
-RECIPIENT_EMAILS  = [e.strip() for e in os.environ["YOUR_EMAIL"].split(",") if e.strip()]
+# Buffer flush timeout in seconds (flush buffered messages after this even if batch isn't full)
+BUFFER_FLUSH_TIMEOUT = 60
 
 # ─── Groups / Channels to Monitor ────────────────────────────────────────────
-# Add usernames (without @) or invite links or numeric IDs
-# Examples:
-#   "python_jobs"          → public channel @python_jobs
-#   "https://t.me/aijobs"  → public link
-#   -1001234567890         → private group numeric ID (get via list_groups.py)
 WATCH_GROUPS = [
-    "tcs_nqt_2026",        # replace with real group usernames
+    "tcs_nqt_2026",
     "bnydiscussion2020",
     "tcshyderabadregion",
     "talentdin",
@@ -70,24 +57,9 @@ WATCH_GROUPS = [
     "gocareers",
     "fresher_jobs2",
     "campusdriveupdates",
-    "fresher_tech_job"
-    "jobsandinternshipdaily"
-    # add as many as you want
+    "fresher_tech_job",
+    "jobsandinternshipdaily",
 ]
-
-# ─── Your Profile ────────────────────────────────────────────────────────────
-MY_PROFILE = """
-I am a Data / AI / ML professional seeking new opportunities.
-Core skills:
-- Machine Learning & Deep Learning (PyTorch, TensorFlow, scikit-learn)
-- Data Science & Analytics (Python, Pandas, NumPy, SQL)
-- AI/LLM applications (LangChain, RAG, fine-tuning, prompt engineering)
-- Data Engineering (Spark, Airflow, dbt, ETL pipelines)
-- MLOps (Docker, Kubernetes, MLflow, CI/CD for ML)
-- Cloud (AWS SageMaker, GCP Vertex AI, Azure ML)
-- Visualization (Power BI, Tableau, Matplotlib)
-Open to: Remote, Hybrid, On-site | Worldwide
-"""
 
 # ─── Keyword pre-filter ───────────────────────────────────────────────────────
 JOB_KEYWORDS = [
@@ -97,152 +69,16 @@ JOB_KEYWORDS = [
     "experience required", "salary", "ctc", "lpa", "remote",
 ]
 
+
 def looks_like_job(text: str) -> bool:
     t = text.lower()
     return any(kw in t for kw in JOB_KEYWORDS)
 
-# ─── Azure OpenAI GPT-4o Matching ────────────────────────────────────────────
-azure_client = AzureOpenAI(
-    api_key=AZURE_OPENAI_KEY,
-    azure_endpoint=AZURE_OPENAI_ENDPOINT,
-    api_version=AZURE_API_VERSION,
-)
-
-def analyze_job(text: str, source: str) -> dict | None:
-    """Returns a dict with job details if it's a match, else None."""
-    prompt = f"""
-You are a job-matching assistant. Analyze this Telegram message.
-
-CANDIDATE PROFILE:
-{MY_PROFILE}
-
-SOURCE GROUP: {source}
-
-MESSAGE:
-\"\"\"
-{text[:3000]}
-\"\"\"
-
-Tasks:
-1. Is this message a job posting? (yes/no)
-2. If yes, does it match the candidate's Data/AI/ML profile? (yes/no)
-3. Extract: job title, company name, location, salary (if mentioned), application link or contact.
-4. One-sentence match reason.
-
-Reply ONLY in this exact format:
-IS_JOB: yes|no
-IS_MATCH: yes|no
-TITLE: <title>
-COMPANY: <company or Unknown>
-LOCATION: <location or Remote/Unknown>
-SALARY: <salary or Not mentioned>
-LINK: <url or contact or Not found>
-REASON: <one sentence>
-"""
-    try:
-        res = azure_client.chat.completions.create(
-            model=AZURE_DEPLOYMENT_NAME,
-            max_tokens=400,
-            messages=[
-                {"role": "system", "content": "You are a precise job-matching assistant. Follow the exact output format requested."},
-                {"role": "user", "content": prompt},
-            ],
-        )
-        raw = res.choices[0].message.content.strip()
-        log.info("GPT-4o:\n%s", raw)
-
-        def get(key):
-            m = re.search(rf"^{key}:\s*(.+)$", raw, re.MULTILINE | re.IGNORECASE)
-            return m.group(1).strip() if m else ""
-
-        if get("IS_JOB").lower() != "yes" or get("IS_MATCH").lower() != "yes":
-            return None
-
-        return {
-            "title":    get("TITLE") or "Unknown Role",
-            "company":  get("COMPANY") or "Unknown",
-            "location": get("LOCATION") or "Unknown",
-            "salary":   get("SALARY") or "Not mentioned",
-            "link":     get("LINK") or "Not found",
-            "reason":   get("REASON"),
-            "source":   source,
-            "original": text,
-            "time":     datetime.now().strftime("%Y-%m-%d %H:%M"),
-        }
-    except Exception as e:
-        log.error("GPT-4o error: %s", e)
-        return None
-
-# ─── Notifications ────────────────────────────────────────────────────────────
-# def send_whatsapp(job: dict):
-#     try:
-#         twilio = TwilioClient(TWILIO_SID, TWILIO_AUTH)
-#         body = (
-#             f"🎯 *Job Match!*\n\n"
-#             f"💼 *{job['title']}* at *{job['company']}*\n"
-#             f"📍 {job['location']}\n"
-#             f"💰 {job['salary']}\n"
-#             f"🔗 {job['link']}\n\n"
-#             f"✅ _{job['reason']}_\n\n"
-#             f"📢 Source: {job['source']}\n"
-#             f"🕐 {job['time']}"
-#         )
-#         twilio.messages.create(body=body, from_=TWILIO_WA_FROM, to=YOUR_WA_NUMBER)
-#         log.info("✅ WhatsApp sent")
-#     except Exception as e:
-#         log.error("WhatsApp error: %s", e)
-
-
-def send_email(job: dict):
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"🎯 Job Match: {job['title']} at {job['company']}"
-        msg["From"]    = SMTP_USER
-        msg["To"]      = ", ".join(RECIPIENT_EMAILS)
-
-        snippet = job["original"][:2000] + ("..." if len(job["original"]) > 2000 else "")
-
-        html = f"""
-<html><body style="font-family:'Segoe UI',Arial,sans-serif;max-width:620px;margin:auto;background:#f4f7fb;padding:20px;">
-  <div style="background:#fff;border-radius:12px;padding:28px;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
-    <h2 style="color:#1d4ed8;margin-top:0;">🎯 Job Match Found</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
-      <tr style="background:#eff6ff;"><td style="padding:10px 14px;font-weight:600;color:#374151;width:130px;">Role</td>
-          <td style="padding:10px 14px;color:#1e40af;font-weight:700;">{job['title']}</td></tr>
-      <tr><td style="padding:10px 14px;font-weight:600;color:#374151;">Company</td>
-          <td style="padding:10px 14px;">{job['company']}</td></tr>
-      <tr style="background:#eff6ff;"><td style="padding:10px 14px;font-weight:600;color:#374151;">Location</td>
-          <td style="padding:10px 14px;">{job['location']}</td></tr>
-      <tr><td style="padding:10px 14px;font-weight:600;color:#374151;">Salary</td>
-          <td style="padding:10px 14px;">{job['salary']}</td></tr>
-      <tr style="background:#eff6ff;"><td style="padding:10px 14px;font-weight:600;color:#374151;">Apply / Contact</td>
-          <td style="padding:10px 14px;"><a href="{job['link']}" style="color:#2563eb;">{job['link']}</a></td></tr>
-      <tr><td style="padding:10px 14px;font-weight:600;color:#374151;">Why it matches</td>
-          <td style="padding:10px 14px;color:#059669;">{job['reason']}</td></tr>
-      <tr style="background:#eff6ff;"><td style="padding:10px 14px;font-weight:600;color:#374151;">Source</td>
-          <td style="padding:10px 14px;">{job['source']}</td></tr>
-      <tr><td style="padding:10px 14px;font-weight:600;color:#374151;">Time</td>
-          <td style="padding:10px 14px;color:#6b7280;">{job['time']}</td></tr>
-    </table>
-    <h3 style="color:#374151;">📋 Original Post</h3>
-    <pre style="background:#f9fafb;padding:14px;border-radius:8px;border-left:4px solid #3b82f6;
-         white-space:pre-wrap;font-size:13px;color:#374151;">{snippet}</pre>
-  </div>
-</body></html>
-"""
-        msg.attach(MIMEText(html, "html"))
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-            s.starttls()
-            s.login(SMTP_USER, SMTP_PASSWORD)
-            s.sendmail(SMTP_USER, RECIPIENT_EMAILS, msg.as_string())
-        log.info("✅ Email sent to %d recipient(s)", len(RECIPIENT_EMAILS))
-    except Exception as e:
-        log.error("Email error: %s", e)
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 async def main():
     client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
-    await client.start()        # prompts phone + OTP on first run, then saves session
+    await client.start()
 
     log.info("✅ Logged in as: %s", (await client.get_me()).username)
 
@@ -261,25 +97,116 @@ async def main():
         log.error("No valid groups found. Check WATCH_GROUPS in config.")
         return
 
+    # ─── Batch Buffer State ───────────────────────────────────────────
+    analyzer = BatchAnalyzer()
+    batch_buffer: list[dict] = []
+    buffer_lock = asyncio.Lock()
+    flush_timer_task: asyncio.Task | None = None
+
+    # Digest mode: accumulate matches and send periodically
+    digest_buffer: list[dict] = []
+    digest_lock = asyncio.Lock()
+
+    async def flush_batch():
+        """Process the current batch buffer through LLM."""
+        nonlocal batch_buffer, flush_timer_task
+
+        async with buffer_lock:
+            if not batch_buffer:
+                return
+            current_batch = batch_buffer[:]
+            batch_buffer = []
+            flush_timer_task = None
+
+        log.info("📦 Flushing batch of %d messages for analysis...", len(current_batch))
+
+        # Run LLM analysis in thread pool (it's synchronous)
+        loop = asyncio.get_event_loop()
+        matches = await loop.run_in_executor(
+            None, analyzer.analyze_batch, current_batch, "realtime"
+        )
+
+        if not matches:
+            log.info("❌ No matches in this batch.")
+            return
+
+        log.info("🎯 %d match(es) found in batch!", len(matches))
+
+        if EMAIL_MODE == "digest":
+            async with digest_lock:
+                digest_buffer.extend(matches)
+                log.info("  → Added to digest buffer (%d total pending)", len(digest_buffer))
+        else:
+            # Instant mode: send email for each match immediately
+            for job in matches:
+                log.info("  🎯 Match: %s @ %s", job["title"], job["company"])
+                send_instant_match_email(job)
+
+    async def schedule_flush():
+        """Wait BUFFER_FLUSH_TIMEOUT then flush."""
+        await asyncio.sleep(BUFFER_FLUSH_TIMEOUT)
+        await flush_batch()
+
+    async def send_digest():
+        """Periodically send digest email if there are accumulated matches."""
+        nonlocal digest_buffer
+        while True:
+            await asyncio.sleep(EMAIL_DIGEST_INTERVAL_MINUTES * 60)
+            async with digest_lock:
+                if not digest_buffer:
+                    continue
+                jobs_to_send = digest_buffer[:]
+                digest_buffer = []
+
+            period = f"Last {EMAIL_DIGEST_INTERVAL_MINUTES} min"
+            log.info("📧 Sending digest email with %d match(es)...", len(jobs_to_send))
+            send_digest_email(jobs_to_send, period)
+
+    # ─── Message Handler ──────────────────────────────────────────────
     @client.on(events.NewMessage(chats=watch_entities))
     async def handler(event):
+        nonlocal flush_timer_task
+
         text = event.message.message
         if not text or not looks_like_job(text):
             return
 
         chat = await event.get_chat()
         source = getattr(chat, "title", str(chat.id))
-        log.info("📩 Possible job in '%s' — analyzing...", source)
+        username = getattr(chat, "username", None) or str(chat.id)
+        msg_time = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        job = analyze_job(text, source)
-        if job:
-            log.info("🎯 Match: %s @ %s", job["title"], job["company"])
-            # send_whatsapp(job)
-            send_email(job)
-        else:
-            log.info("❌ Not a match.")
+        log.info("📩 Possible job in '%s' — buffering...", source)
 
-    log.info("👀 Listening for new messages in %d group(s)...", len(watch_entities))
+        async with buffer_lock:
+            batch_buffer.append({
+                "text": text,
+                "source": source,
+                "msg_time": msg_time,
+                "msg_id": event.message.id,
+                "group_username": username,
+            })
+
+            # Flush immediately if batch is full
+            if len(batch_buffer) >= LLM_BATCH_SIZE:
+                asyncio.create_task(flush_batch())
+                return
+
+            # Start timer for time-based flush (if not already running)
+            if flush_timer_task is None or flush_timer_task.done():
+                flush_timer_task = asyncio.create_task(schedule_flush())
+
+    # Start digest sender if in digest mode
+    if EMAIL_MODE == "digest":
+        asyncio.create_task(send_digest())
+        log.info("📧 Digest mode active — emails every %d minutes", EMAIL_DIGEST_INTERVAL_MINUTES)
+    else:
+        log.info("📧 Instant mode — emails sent per match (after batch analysis)")
+
+    log.info(
+        "👀 Listening for new messages in %d group(s) (batch size: %d, flush timeout: %ds)...",
+        len(watch_entities), LLM_BATCH_SIZE, BUFFER_FLUSH_TIMEOUT,
+    )
     await client.run_until_disconnected()
 
 
