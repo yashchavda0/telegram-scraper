@@ -28,20 +28,40 @@ SMTP_USER = os.environ["SMTP_USER"]
 SMTP_PASSWORD = os.environ["SMTP_PASSWORD"]
 RECIPIENT_EMAILS = [e.strip() for e in os.environ["YOUR_EMAIL"].split(",") if e.strip()]
 
-# Shared <head> boilerplate: locks clients out of auto-dark-mode inversion,
-# with a defensive re-assert for clients that ignore the meta tag, plus a
-# mobile breakpoint that collapses multi-column tables to stacked rows.
-_HEAD_STYLE = """<meta name="color-scheme" content="light">
-  <meta name="supported-color-schemes" content="light">
+# Shared <head> boilerplate. Declares real light+dark support (not a light-only
+# lock) so Gmail renders our explicit dark palette instead of running its own
+# blind auto-invert heuristic on an undeclared email, plus a mobile breakpoint
+# that collapses/compacts multi-column tables for narrow screens.
+_HEAD_STYLE = """<meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
   <style>
-    :root { color-scheme: light; supported-color-schemes: light; }
+    :root { color-scheme: light dark; supported-color-schemes: light dark; }
     @media (prefers-color-scheme: dark) {
-      body, .email-bg { background:#f1f5f9 !important; }
-      .card { background:#ffffff !important; }
+      body, .email-bg { background:#020617 !important; }
+      .card { background:#0f172a !important; }
+      .card-highlight { background:#241f0c !important; border-color:#a16207 !important; }
+      .text-ink { color:#f1f5f9 !important; }
+      .text-body { color:#cbd5e1 !important; }
+      .text-muted { color:#94a3b8 !important; }
+      .bg-surface-soft { background:#1e293b !important; }
+      .border-hairline { border-color:#334155 !important; }
+      .border-dashed { border-color:#475569 !important; }
+      .accent-blue-text { color:#60a5fa !important; }
+      .accent-amber-text { color:#fbbf24 !important; }
+      .accent-green-bg { background:#052e1f !important; }
+      .accent-green-border { border-color:#34d399 !important; }
+      .accent-green-text { color:#6ee7b7 !important; }
+      .badge-purple-bg { background:#2e1a47 !important; }
+      .badge-purple-text { color:#d8b4fe !important; }
+      .kpi-diagnostic-value { color:#94a3b8 !important; }
     }
     @media screen and (max-width:600px) {
       .container { width:100% !important; padding:12px !important; }
-      .kpi-table td { display:block !important; width:100% !important; margin-bottom:8px !important; }
+      .kpi-table { border-spacing:4px !important; }
+      .kpi-cell { padding:8px 3px !important; border-radius:8px !important; }
+      .kpi-value { font-size:15px !important; }
+      .kpi-hero-value { font-size:20px !important; }
+      .kpi-label { font-size:7.5px !important; line-height:1.25 !important; letter-spacing:0.1px !important; white-space:normal !important; margin-top:2px !important; }
       .detail-td { display:block !important; width:100% !important; }
       .detail-spacer { display:none !important; }
       .btn-cell { display:block !important; width:100% !important; padding-right:0 !important; }
@@ -51,7 +71,7 @@ _HEAD_STYLE = """<meta name="color-scheme" content="light">
 _HEADER_BACKGROUNDS = {
     "solid-blue": "background:#2563eb;",
     "gradient-green": "background:linear-gradient(135deg,#059669 0%,#0d9488 100%);",
-    "gradient-purple": "background:linear-gradient(135deg,#1e40af 0%,#7c3aed 50%,#db2777 100%);",
+    "solid-indigo": "background:#3730a3;",
 }
 
 
@@ -107,24 +127,19 @@ def _build_quoted_post(original: str, limit: int = 800) -> str:
     ellipsis = "…" if truncated else ""
     return f"""
       <details style="margin-top:14px;">
-        <summary style="cursor:pointer;color:#64748b;font-size:12px;font-weight:500;padding:6px 0;">📋 View Original Post</summary>
-        <pre style="background:#f8fafc;padding:14px;border-radius:8px;font-size:12px;line-height:1.5;
+        <summary class="text-muted" style="cursor:pointer;color:#64748b;font-size:12px;font-weight:500;padding:6px 0;">📋 View Original Post</summary>
+        <pre class="bg-surface-soft border-hairline text-body" style="background:#f8fafc;padding:14px;border-radius:8px;font-size:12px;line-height:1.5;
              white-space:pre-wrap;word-break:break-word;color:#475569;margin-top:8px;
              border:1px solid #e2e8f0;max-height:300px;overflow-y:auto;">{excerpt}{ellipsis}</pre>
       </details>"""
 
 
 def _build_cta_row(link: str, tg_link: str | None) -> str:
-    """Apply Now / View on Telegram button row, with MSO bulletproof-button fallback for Outlook."""
+    """Apply Now / View on Telegram button row."""
     has_apply = bool(link) and link.lower() not in ("not found", "none", "n/a")
     if not has_apply and not tg_link:
         return ""
 
-    # Plain styled anchors only (no MSO/VML bulletproof-button markup) — the
-    # actual delivery target is Gmail mobile, where the VML fallback is dead
-    # weight that was pushing multi-job emails over Gmail's ~102KB clip limit.
-    # Outlook desktop still gets a functional, colored, clickable button; it
-    # just renders with square corners instead of the VML rounded pill.
     apply_cell = ""
     if has_apply:
         apply_cell = f"""
@@ -150,10 +165,10 @@ def _build_meta_row(source: str, time_str: str) -> str:
     return f"""
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:12px 0;">
         <tr>
-          <td align="left" style="font-size:12px;color:#475569;">
-            <span style="background:#f1f5f9;padding:4px 10px;border-radius:20px;">📢 {source}</span>
+          <td align="left" class="text-body" style="font-size:12px;color:#475569;">
+            <span class="bg-surface-soft" style="background:#f1f5f9;padding:4px 10px;border-radius:20px;">📢 {source}</span>
           </td>
-          <td align="right" style="font-size:12px;color:#64748b;white-space:nowrap;">🕐 {time_str}</td>
+          <td align="right" class="text-muted" style="font-size:12px;color:#64748b;white-space:nowrap;">🕐 {time_str}</td>
         </tr>
       </table>"""
 
@@ -163,10 +178,10 @@ def _build_empty_state(stats: dict) -> str:
     scanned = stats.get("total_scanned", 0)
     posts = stats.get("job_posts", 0)
     return f"""
-    <div style="background:#ffffff;border:1px dashed #cbd5e1;border-radius:12px;padding:40px 24px;text-align:center;">
+    <div class="card border-dashed" style="background:#ffffff;border:1px dashed #cbd5e1;border-radius:12px;padding:40px 24px;text-align:center;">
       <div style="font-size:32px;margin-bottom:8px;">🔍</div>
-      <div style="font-size:16px;font-weight:700;color:#0f172a;margin-bottom:4px;">No matches this time</div>
-      <div style="font-size:13px;color:#64748b;">We scanned {scanned} message(s) and found {posts} job post(s), but none matched your profile.</div>
+      <div class="text-ink" style="font-size:16px;font-weight:700;color:#0f172a;margin-bottom:4px;">No matches this time</div>
+      <div class="text-muted" style="font-size:13px;color:#64748b;">We scanned {scanned} message(s) and found {posts} job post(s), but none matched your profile.</div>
     </div>"""
 
 
@@ -190,11 +205,11 @@ def _build_compact_job_rows(jobs: list[dict]) -> str:
 
         rows += f"""
         <tr>
-          <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;vertical-align:top;">
-            <div style="font-size:13px;font-weight:600;color:#0f172a;">{title}</div>
-            <div style="font-size:12px;color:#64748b;">{company} • {location} • {salary}</div>
+          <td class="border-hairline" style="padding:10px 8px;border-bottom:1px solid #f1f5f9;vertical-align:top;">
+            <div class="text-ink" style="font-size:13px;font-weight:600;color:#0f172a;">{title}</div>
+            <div class="text-muted" style="font-size:12px;color:#64748b;">{company} • {location} • {salary}</div>
           </td>
-          <td align="right" style="padding:10px 8px;border-bottom:1px solid #f1f5f9;vertical-align:top;white-space:nowrap;">
+          <td align="right" class="border-hairline" style="padding:10px 8px;border-bottom:1px solid #f1f5f9;vertical-align:top;white-space:nowrap;">
             {apply_cell}
           </td>
         </tr>"""
@@ -222,12 +237,12 @@ def _build_job_card(job: dict, index: int, show_message_header: bool = False, gr
     quoted_html = _build_quoted_post(job.get("original", ""))
 
     return f"""
-    <div class="card" style="background:#ffffff;border-radius:12px;padding:24px;margin-bottom:12px;
+    <div class="card border-hairline" style="background:#ffffff;border-radius:12px;padding:24px;margin-bottom:12px;
                 border:1px solid #e2e8f0;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
       <!-- Header -->
       <div style="margin-bottom:14px;">
-        <h3 style="margin:0 0 4px;color:#0f172a;font-size:18px;font-weight:700;">{title}</h3>
-        <p style="margin:0;color:#475569;font-size:14px;">{company}</p>
+        <h3 class="text-ink" style="margin:0 0 4px;color:#0f172a;font-size:18px;font-weight:700;">{title}</h3>
+        <p class="text-body" style="margin:0;color:#475569;font-size:14px;">{company}</p>
       </div>
 
       <!-- CTA -->
@@ -236,21 +251,21 @@ def _build_job_card(job: dict, index: int, show_message_header: bool = False, gr
       <!-- Details Grid -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:14px 0;">
         <tr>
-          <td class="detail-td" width="50%" valign="top" style="padding:10px 12px;background:#f8fafc;border-radius:8px;">
-            <span style="display:block;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;font-weight:600;">Location</span>
-            <span style="font-size:14px;color:#0f172a;font-weight:600;">{location}</span>
+          <td class="detail-td bg-surface-soft" width="50%" valign="top" style="padding:10px 12px;background:#f8fafc;border-radius:8px;">
+            <span class="text-muted" style="display:block;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;font-weight:600;">Location</span>
+            <span class="text-ink" style="font-size:14px;color:#0f172a;font-weight:600;">{location}</span>
           </td>
           <td class="detail-spacer" width="8"></td>
-          <td class="detail-td" width="50%" valign="top" style="padding:10px 12px;background:#f8fafc;border-radius:8px;">
-            <span style="display:block;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;font-weight:600;">Salary</span>
-            <span style="font-size:14px;color:#0f172a;font-weight:600;">{salary}</span>
+          <td class="detail-td bg-surface-soft" width="50%" valign="top" style="padding:10px 12px;background:#f8fafc;border-radius:8px;">
+            <span class="text-muted" style="display:block;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;font-weight:600;">Salary</span>
+            <span class="text-ink" style="font-size:14px;color:#0f172a;font-weight:600;">{salary}</span>
           </td>
         </tr>
       </table>
 
       <!-- Match Reason -->
-      <div style="background:#ecfdf5;border-radius:8px;padding:10px 14px;margin-bottom:2px;border-left:3px solid #10b981;">
-        <span style="font-size:13px;color:#065f46;">✅ {reason}</span>
+      <div class="accent-green-bg accent-green-border" style="background:#ecfdf5;border-radius:8px;padding:10px 14px;margin-bottom:2px;border-left:3px solid #10b981;">
+        <span class="accent-green-text" style="font-size:13px;color:#065f46;">✅ {reason}</span>
       </div>
 
       <!-- Meta -->
@@ -293,16 +308,16 @@ def _build_message_group(jobs: list[dict], group_num: int) -> str:
                 )
 
             cards += f"""
-            <div style="background:#ffffff;border-radius:8px;padding:16px;margin-bottom:8px;border:1px solid #e2e8f0;">
+            <div class="card border-hairline" style="background:#ffffff;border-radius:8px;padding:16px;margin-bottom:8px;border:1px solid #e2e8f0;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
                 <td valign="top">
-                  <h4 style="margin:0 0 4px;color:#0f172a;font-size:15px;">{title}</h4>
-                  <p style="margin:0 0 8px;color:#475569;font-size:13px;">{company} • {location} • {salary}</p>
+                  <h4 class="text-ink" style="margin:0 0 4px;color:#0f172a;font-size:15px;">{title}</h4>
+                  <p class="text-body" style="margin:0 0 8px;color:#475569;font-size:13px;">{company} • {location} • {salary}</p>
                 </td>
                 <td valign="top" align="right" style="white-space:nowrap;padding-left:8px;">{apply_html}</td>
               </tr></table>
-              <div style="background:#ecfdf5;border-radius:6px;padding:8px 12px;">
-                <span style="font-size:12px;color:#065f46;">✅ {reason}</span>
+              <div class="accent-green-bg" style="background:#ecfdf5;border-radius:6px;padding:8px 12px;">
+                <span class="accent-green-text" style="font-size:12px;color:#065f46;">✅ {reason}</span>
               </div>
             </div>"""
         body_html = cards
@@ -318,7 +333,7 @@ def _build_message_group(jobs: list[dict], group_num: int) -> str:
     quoted_html = _build_quoted_post(jobs[0].get("original", ""))
 
     return f"""
-    <div class="card" style="background:#fefce8;border-radius:12px;padding:20px;margin-bottom:16px;
+    <div class="card-highlight" style="background:#fefce8;border-radius:12px;padding:20px;margin-bottom:16px;
                 border:1px solid #fde047;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
       <!-- Group Header -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;">
@@ -327,7 +342,7 @@ def _build_message_group(jobs: list[dict], group_num: int) -> str:
             <span style="background:#b45309;color:#fff;font-size:11px;font-weight:700;padding:4px 10px;
                    border-radius:20px;text-transform:uppercase;letter-spacing:0.3px;">{count} Matches · 1 Message</span>
           </td>
-          <td valign="middle" style="padding-left:10px;font-size:12px;color:#64748b;">📢 {source} &nbsp;·&nbsp; 🕐 {time_str}</td>
+          <td valign="middle" class="text-muted" style="padding-left:10px;font-size:12px;color:#64748b;">📢 {source} &nbsp;·&nbsp; 🕐 {time_str}</td>
         </tr>
       </table>
 
@@ -382,14 +397,14 @@ def _build_channel_section_header(source: str, match_count: int, is_first: bool 
     return f"""
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:{top_margin} 0 14px;">
       <tr>
-        <td style="border-bottom:2px solid #e2e8f0;padding-bottom:9px;">
+        <td class="border-hairline" style="border-bottom:2px solid #e2e8f0;padding-bottom:9px;">
           <table role="presentation" cellpadding="0" cellspacing="0"><tr>
             <td valign="middle" style="font-size:14px;padding-right:8px;">📢</td>
             <td valign="middle">
-              <span style="font-size:16px;font-weight:800;color:#0f172a;">{label}</span>
+              <span class="text-ink" style="font-size:16px;font-weight:800;color:#0f172a;">{label}</span>
             </td>
             <td valign="middle" style="padding-left:10px;">
-              <span style="background:#f5f3ff;color:#7c3aed;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap;">{match_count} match{plural}</span>
+              <span class="badge-purple-bg badge-purple-text" style="background:#f5f3ff;color:#7c3aed;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap;">{match_count} match{plural}</span>
             </td>
           </tr></table>
         </td>
@@ -411,7 +426,7 @@ def render_report_email(jobs: list[dict], from_date: str, stats: dict) -> str:
         channel_count = len(channel_sections)
         summary_html = f"""
     <div style="margin:0 0 4px;padding:0 2px;">
-      <p style="margin:0;color:#64748b;font-size:13px;font-weight:600;">
+      <p class="text-muted" style="margin:0;color:#64748b;font-size:13px;font-weight:600;">
         {total_matches} match{'es' if total_matches != 1 else ''} across {channel_count} channel{'s' if channel_count != 1 else ''} · {total_messages_with_matches} message{'s' if total_messages_with_matches != 1 else ''}
       </p>
     </div>"""
@@ -431,7 +446,7 @@ def render_report_email(jobs: list[dict], from_date: str, stats: dict) -> str:
         "📊 SCAN REPORT",
         "Job Scan Report",
         f"Scanned since <strong>{_escape(from_date)}</strong>",
-        "gradient-purple",
+        "solid-indigo",
     )
 
     return _minify(f"""
@@ -447,25 +462,17 @@ def render_report_email(jobs: list[dict], from_date: str, stats: dict) -> str:
     <div style="margin-bottom:20px;">
       <table role="presentation" class="kpi-table" width="100%" style="border-collapse:separate;border-spacing:8px;" cellpadding="0" cellspacing="0">
         <tr>
-          <td class="kpi-cell" style="background:#fff;border-radius:10px;padding:16px;text-align:center;width:20%;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
-            <div style="font-size:22px;font-weight:800;color:#2563eb;">{stats.get('total_scanned', 0)}</div>
-            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">🔍 Scanned</div>
+          <td class="kpi-cell accent-green-bg accent-green-border" style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:18px;text-align:center;width:40%;">
+            <div class="kpi-value kpi-hero-value accent-green-text" style="font-size:30px;font-weight:800;color:#065f46;">{total_matches}</div>
+            <div class="kpi-label accent-green-text" style="font-size:12px;color:#059669;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">✅ Jobs Found</div>
           </td>
-          <td class="kpi-cell" style="background:#fff;border-radius:10px;padding:16px;text-align:center;width:20%;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
-            <div style="font-size:22px;font-weight:800;color:#f59e0b;">{stats.get('job_posts', 0)}</div>
-            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">📝 Job Posts</div>
+          <td class="kpi-cell card" style="background:#fff;border-radius:10px;padding:16px;text-align:center;width:30%;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+            <div class="kpi-value accent-blue-text" style="font-size:20px;font-weight:800;color:#2563eb;">{stats.get('total_scanned', 0)}</div>
+            <div class="kpi-label text-muted" style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">🔍 Scanned</div>
           </td>
-          <td class="kpi-cell" style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:16px;text-align:center;width:20%;">
-            <div style="font-size:24px;font-weight:800;color:#065f46;">{total_matches}</div>
-            <div style="font-size:11px;color:#059669;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">✅ Matches</div>
-          </td>
-          <td class="kpi-cell" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px;text-align:center;width:20%;">
-            <div style="font-size:18px;font-weight:700;color:#94a3b8;">{batches_used}</div>
-            <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">🤖 LLM Batches</div>
-          </td>
-          <td class="kpi-cell" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px;text-align:center;width:20%;">
-            <div style="font-size:18px;font-weight:700;color:#94a3b8;">{tokens_used:,}</div>
-            <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">🔢 Tokens</div>
+          <td class="kpi-cell card" style="background:#fff;border-radius:10px;padding:16px;text-align:center;width:30%;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+            <div class="kpi-value accent-amber-text" style="font-size:20px;font-weight:800;color:#f59e0b;">{stats.get('job_posts', 0)}</div>
+            <div class="kpi-label text-muted" style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">📝 Job Posts</div>
           </td>
         </tr>
       </table>
@@ -478,9 +485,12 @@ def render_report_email(jobs: list[dict], from_date: str, stats: dict) -> str:
     {cards_html}
 
     <!-- Footer -->
-    <div style="text-align:center;padding:24px 0 8px;border-top:1px solid #e2e8f0;margin-top:24px;">
-      <p style="margin:0;color:#64748b;font-size:12px;">
+    <div class="border-hairline" style="text-align:center;padding:24px 0 8px;border-top:1px solid #e2e8f0;margin-top:24px;">
+      <p class="text-muted" style="margin:0;color:#64748b;font-size:12px;">
         Generated by Job Scraper Bot • {datetime.now().strftime("%Y-%m-%d %H:%M")}
+      </p>
+      <p class="text-muted" style="margin:6px 0 0;color:#94a3b8;font-size:10px;">
+        Analyzed via {batches_used} LLM batch{'es' if batches_used != 1 else ''} · {tokens_used:,} tokens
       </p>
     </div>
 
@@ -519,8 +529,8 @@ def render_digest_email(jobs: list[dict], period_label: str) -> str:
     {cards_html}
 
     <!-- Footer -->
-    <div style="text-align:center;padding:20px 0 8px;border-top:1px solid #e2e8f0;margin-top:20px;">
-      <p style="margin:0;color:#64748b;font-size:12px;">
+    <div class="border-hairline" style="text-align:center;padding:20px 0 8px;border-top:1px solid #e2e8f0;margin-top:20px;">
+      <p class="text-muted" style="margin:0;color:#64748b;font-size:12px;">
         Real-time Telegram Job Scanner • {datetime.now().strftime("%Y-%m-%d %H:%M")}
       </p>
     </div>
@@ -556,7 +566,7 @@ def render_instant_email(job: dict) -> str:
 
     <!-- Footer -->
     <div style="text-align:center;padding:16px 0 8px;">
-      <p style="margin:0;color:#64748b;font-size:12px;">
+      <p class="text-muted" style="margin:0;color:#64748b;font-size:12px;">
         Real-time Telegram Job Scanner • {datetime.now().strftime("%Y-%m-%d %H:%M")}
       </p>
     </div>
