@@ -350,21 +350,76 @@ def _group_jobs_by_message(jobs: list[dict]) -> list[list[dict]]:
     return groups
 
 
+def _group_jobs_by_channel(job_groups: list[list[dict]]) -> list[tuple[str, list[list[dict]]]]:
+    """Bucket message-groups by source channel, busiest channel first.
+
+    Within a channel, message-groups keep the chronological-ascending order
+    they already arrive in from `_group_jobs_by_message` — no secondary sort.
+    """
+    buckets: dict[str, list[list[dict]]] = {}
+    for group in job_groups:
+        source = group[0].get("source", "Unknown Source")
+        buckets.setdefault(source, []).append(group)
+
+    def sort_key(item: tuple[str, list[list[dict]]]) -> tuple[int, str]:
+        source, groups = item
+        return (-sum(len(g) for g in groups), source.lower())
+
+    return sorted(buckets.items(), key=sort_key)
+
+
+def _build_channel_section_header(source: str, match_count: int, is_first: bool = False) -> str:
+    """Section divider introducing a channel's block of matches."""
+    label = _escape(source)
+    plural = "" if match_count == 1 else "es"
+    top_margin = "12px" if is_first else "28px"
+    return f"""
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:{top_margin} 0 14px;">
+      <tr>
+        <td style="border-bottom:2px solid #e2e8f0;padding-bottom:9px;">
+          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+            <td valign="middle" style="font-size:14px;padding-right:8px;">📢</td>
+            <td valign="middle">
+              <span style="font-size:16px;font-weight:800;color:#0f172a;">{label}</span>
+            </td>
+            <td valign="middle" style="padding-left:10px;">
+              <span style="background:#f5f3ff;color:#7c3aed;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap;">{match_count} match{plural}</span>
+            </td>
+          </tr></table>
+        </td>
+      </tr>
+    </table>"""
+
+
 def render_report_email(jobs: list[dict], from_date: str, stats: dict) -> str:
     """Render the full historical scan report HTML email."""
     job_groups = _group_jobs_by_message(jobs)
-
-    if job_groups:
-        cards_html = ""
-        for i, group in enumerate(job_groups, 1):
-            cards_html += _build_message_group(group, i)
-    else:
-        cards_html = _build_empty_state(stats)
 
     total_matches = len(jobs)
     total_messages_with_matches = len(job_groups)
     batches_used = stats.get("total_batches", 0)
     tokens_used = stats.get("total_tokens", 0)
+
+    if job_groups:
+        channel_sections = _group_jobs_by_channel(job_groups)
+        channel_count = len(channel_sections)
+        summary_html = f"""
+    <div style="margin:0 0 4px;padding:0 2px;">
+      <p style="margin:0;color:#64748b;font-size:13px;font-weight:600;">
+        {total_matches} match{'es' if total_matches != 1 else ''} across {channel_count} channel{'s' if channel_count != 1 else ''} · {total_messages_with_matches} message{'s' if total_messages_with_matches != 1 else ''}
+      </p>
+    </div>"""
+        cards_html = ""
+        group_counter = 0
+        for idx, (source, groups) in enumerate(channel_sections):
+            channel_total = sum(len(g) for g in groups)
+            cards_html += _build_channel_section_header(source, channel_total, is_first=(idx == 0))
+            for group in groups:
+                group_counter += 1
+                cards_html += _build_message_group(group, group_counter)
+    else:
+        summary_html = ""
+        cards_html = _build_empty_state(stats)
 
     header_html = _email_header(
         "📊 SCAN REPORT",
@@ -383,44 +438,37 @@ def render_report_email(jobs: list[dict], from_date: str, stats: dict) -> str:
     {header_html}
 
     <!-- KPI Stats Row -->
-    <div style="margin-bottom:24px;">
+    <div style="margin-bottom:20px;">
       <table role="presentation" class="kpi-table" width="100%" style="border-collapse:separate;border-spacing:8px;" cellpadding="0" cellspacing="0">
         <tr>
           <td class="kpi-cell" style="background:#fff;border-radius:10px;padding:16px;text-align:center;width:20%;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
             <div style="font-size:22px;font-weight:800;color:#2563eb;">{stats.get('total_scanned', 0)}</div>
-            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">Scanned</div>
+            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">🔍 Scanned</div>
           </td>
           <td class="kpi-cell" style="background:#fff;border-radius:10px;padding:16px;text-align:center;width:20%;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
             <div style="font-size:22px;font-weight:800;color:#f59e0b;">{stats.get('job_posts', 0)}</div>
-            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">Job Posts</div>
+            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">📝 Job Posts</div>
           </td>
-          <td class="kpi-cell" style="background:#fff;border-radius:10px;padding:16px;text-align:center;width:20%;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
-            <div style="font-size:22px;font-weight:800;color:#10b981;">{total_matches}</div>
-            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">Matches</div>
+          <td class="kpi-cell" style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:16px;text-align:center;width:20%;">
+            <div style="font-size:24px;font-weight:800;color:#065f46;">{total_matches}</div>
+            <div style="font-size:11px;color:#059669;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">✅ Matches</div>
           </td>
-          <td class="kpi-cell" style="background:#fff;border-radius:10px;padding:16px;text-align:center;width:20%;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
-            <div style="font-size:22px;font-weight:800;color:#8b5cf6;">{batches_used}</div>
-            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">LLM Batches</div>
+          <td class="kpi-cell" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px;text-align:center;width:20%;">
+            <div style="font-size:18px;font-weight:700;color:#94a3b8;">{batches_used}</div>
+            <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">🤖 LLM Batches</div>
           </td>
-          <td class="kpi-cell" style="background:#fff;border-radius:10px;padding:16px;text-align:center;width:20%;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
-            <div style="font-size:22px;font-weight:800;color:#ec4899;">{tokens_used:,}</div>
-            <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">Tokens</div>
+          <td class="kpi-cell" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px;text-align:center;width:20%;">
+            <div style="font-size:18px;font-weight:700;color:#94a3b8;">{tokens_used:,}</div>
+            <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;">🔢 Tokens</div>
           </td>
         </tr>
       </table>
     </div>
 
-    <!-- Section Header -->
-    <div style="margin-bottom:16px;">
-      <h2 style="margin:0;color:#0f172a;font-size:20px;font-weight:700;">
-        Matched Jobs
-        <span style="font-size:13px;font-weight:500;color:#64748b;margin-left:8px;">
-          ({total_matches} jobs from {total_messages_with_matches} messages)
-        </span>
-      </h2>
-    </div>
+    <!-- Summary Caption -->
+    {summary_html}
 
-    <!-- Job Cards -->
+    <!-- Job Cards (grouped by channel) -->
     {cards_html}
 
     <!-- Footer -->
