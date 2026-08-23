@@ -6,6 +6,7 @@ Handles multi-job grouping from single messages.
 """
 
 import html
+import re
 import smtplib
 import logging
 import os
@@ -59,6 +60,17 @@ def _escape(text: str) -> str:
     return html.escape(str(text)) if text else ""
 
 
+def _minify(rendered_html: str) -> str:
+    """Collapse whitespace between tags to keep messages under Gmail's ~102KB clip limit.
+
+    Safe because all dynamic content is HTML-escaped before insertion, so any
+    literal '<'/'>' left in the string only ever belongs to structural markup —
+    never to job text — meaning whitespace strictly between '>' and '<' is
+    always insignificant layout whitespace, not content.
+    """
+    return re.sub(r">\s+<", "><", rendered_html.strip())
+
+
 def _telegram_link(group_username: str | None, msg_id: int | None) -> str | None:
     """Generate Telegram deep link for public groups."""
     if group_username and msg_id:
@@ -84,19 +96,22 @@ def _email_header(eyebrow: str, title: str, subtitle: str, style: str) -> str:
     </div>"""
 
 
-def _build_quoted_post(original: str, limit: int = 350) -> str:
-    """Always-visible quoted excerpt of the raw Telegram post (replaces the unreliable <details> toggle)."""
+def _build_quoted_post(original: str, limit: int = 800) -> str:
+    """Scrollable original-post excerpt. <details> collapses on clients that support it
+    (Apple Mail, Outlook.com); Gmail (the primary target, mobile and web) doesn't implement
+    the toggle and simply renders it always-expanded — which is the behavior that tested
+    well on real mobile Gmail."""
     excerpt, truncated = _truncate_then_escape(original, limit)
     if not excerpt:
         return ""
     ellipsis = "…" if truncated else ""
     return f"""
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:14px;">
-        <tr><td style="border-left:3px solid #cbd5e1;padding:10px 14px;background:#f8fafc;border-radius:0 8px 8px 0;">
-          <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Original post</div>
-          <div style="font-size:12px;line-height:1.6;color:#475569;white-space:pre-wrap;word-break:break-word;">{excerpt}{ellipsis}</div>
-        </td></tr>
-      </table>"""
+      <details style="margin-top:14px;">
+        <summary style="cursor:pointer;color:#64748b;font-size:12px;font-weight:500;padding:6px 0;">📋 View Original Post</summary>
+        <pre style="background:#f8fafc;padding:14px;border-radius:8px;font-size:12px;line-height:1.5;
+             white-space:pre-wrap;word-break:break-word;color:#475569;margin-top:8px;
+             border:1px solid #e2e8f0;max-height:300px;overflow-y:auto;">{excerpt}{ellipsis}</pre>
+      </details>"""
 
 
 def _build_cta_row(link: str, tg_link: str | None) -> str:
@@ -105,32 +120,23 @@ def _build_cta_row(link: str, tg_link: str | None) -> str:
     if not has_apply and not tg_link:
         return ""
 
+    # Plain styled anchors only (no MSO/VML bulletproof-button markup) — the
+    # actual delivery target is Gmail mobile, where the VML fallback is dead
+    # weight that was pushing multi-job emails over Gmail's ~102KB clip limit.
+    # Outlook desktop still gets a functional, colored, clickable button; it
+    # just renders with square corners instead of the VML rounded pill.
     apply_cell = ""
     if has_apply:
         apply_cell = f"""
         <td class="btn-cell" style="padding-right:8px;padding-bottom:8px;">
-          <!--[if mso]>
-          <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="{link}" style="height:40px;v-text-anchor:middle;width:160px;" arcsize="20%" fillcolor="#2563eb" stroke="f">
-          <center style="color:#ffffff;font-family:sans-serif;font-size:14px;font-weight:600;">Apply Now &rarr;</center>
-          </v:roundrect>
-          <![endif]-->
-          <!--[if !mso]><!-->
           <a href="{link}" style="display:inline-block;padding:11px 22px;background:#2563eb;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;line-height:1;">Apply Now →</a>
-          <!--<![endif]-->
         </td>"""
 
     tg_cell = ""
     if tg_link:
         tg_cell = f"""
         <td class="btn-cell" style="padding-bottom:8px;">
-          <!--[if mso]>
-          <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="{tg_link}" style="height:36px;v-text-anchor:middle;width:150px;" arcsize="20%" fillcolor="#0f7fb5" stroke="f">
-          <center style="color:#ffffff;font-family:sans-serif;font-size:12px;font-weight:600;">View on Telegram</center>
-          </v:roundrect>
-          <![endif]-->
-          <!--[if !mso]><!-->
           <a href="{tg_link}" style="display:inline-block;padding:9px 18px;background:#0f7fb5;color:#ffffff;border-radius:8px;text-decoration:none;font-size:12px;font-weight:600;">View on Telegram</a>
-          <!--<![endif]-->
         </td>"""
 
     return f"""
@@ -428,7 +434,7 @@ def render_report_email(jobs: list[dict], from_date: str, stats: dict) -> str:
         "gradient-purple",
     )
 
-    return f"""
+    return _minify(f"""
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">{_HEAD_STYLE}</head>
@@ -480,7 +486,7 @@ def render_report_email(jobs: list[dict], from_date: str, stats: dict) -> str:
 
   </div>
 </body>
-</html>"""
+</html>""")
 
 
 def render_digest_email(jobs: list[dict], period_label: str) -> str:
@@ -500,7 +506,7 @@ def render_digest_email(jobs: list[dict], period_label: str) -> str:
         "gradient-green",
     )
 
-    return f"""
+    return _minify(f"""
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">{_HEAD_STYLE}</head>
@@ -521,7 +527,7 @@ def render_digest_email(jobs: list[dict], period_label: str) -> str:
 
   </div>
 </body>
-</html>"""
+</html>""")
 
 
 def render_instant_email(job: dict) -> str:
@@ -537,7 +543,7 @@ def render_instant_email(job: dict) -> str:
         "solid-blue",
     )
 
-    return f"""
+    return _minify(f"""
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">{_HEAD_STYLE}</head>
@@ -557,7 +563,7 @@ def render_instant_email(job: dict) -> str:
 
   </div>
 </body>
-</html>"""
+</html>""")
 
 
 def send_email(subject: str, html_body: str):
